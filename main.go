@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/user"
 	"strings"
 
+	"github.com/BurntSushi/toml"
 	"github.com/manifoldco/promptui"
 	"github.com/urfave/cli/v2"
 )
@@ -16,10 +18,11 @@ import (
 var app = cli.NewApp()
 
 type tuser struct {
-	name  string
-	phone string
-	sid   string
-	token string
+	Name      string
+	PhoneTo   string
+	PhoneFrom string
+	Sid       string
+	Token     string
 }
 
 func main() {
@@ -27,9 +30,7 @@ func main() {
 	commands()
 
 	err := app.Run(os.Args)
-	if err != nil {
-		log.Fatal(err)
-	}
+	check(err)
 }
 
 func setup() {
@@ -41,28 +42,23 @@ func setup() {
 }
 
 func commands() {
-	app.Commands = []*cli.Command{
-		// {
-		// 	Name: "Set SID"
-
-		// }
-	}
+	app.Commands = []*cli.Command{}
 }
 
 func send(c *cli.Context) error {
 	user := generateUser()
-	str := fmt.Sprintf("🚀 Yo %s, your script is finished! ", user.name)
+	message := fmt.Sprintf("Yo %s, your script is finished! 🚀", user.Name)
 
 	// Set account keys & information
-	accountSid := user.sid
-	authToken := user.token
-	urlStr := "https://api.twilio.com/2010-04-01/Accounts/" + accountSid + "/Messages.json"
+	accountSid := user.Sid
+	authToken := user.Token
+	urlStr := fmt.Sprintf("https://api.twilio.com/2010-04-01/Accounts/%s/Messages.json", accountSid)
 
 	// Pack up the data for our message
 	msgData := url.Values{}
-	msgData.Set("To", "NUMBER_TO")
-	msgData.Set("From", "NUMBER_FROM")
-	msgData.Set("Body", str)
+	msgData.Set("To", user.PhoneTo)
+	msgData.Set("From", user.PhoneFrom)
+	msgData.Set("Body", message)
 	msgDataReader := *strings.NewReader(msgData.Encode())
 
 	// Create HTTP request client
@@ -79,46 +75,70 @@ func send(c *cli.Context) error {
 		decoder := json.NewDecoder(resp.Body)
 		err := decoder.Decode(&data)
 		if err == nil {
-			str := fmt.Sprintf("🚀 Yo %s, your script is finished! ", user.name)
-			fmt.Println(str)
+			message := fmt.Sprintf("🚀 Yo %s, your script is finished! ", user.Name)
+			fmt.Println(message)
 		}
 	} else {
-		str = fmt.Sprintf("💩 Sorry %s, something went wrong!", user.name)
+		message = fmt.Sprintf("💩 Sorry %s, something went wrong!", user.Name)
 		log.Print(resp.Status)
-		fmt.Println(str)
+		fmt.Println(message)
 	}
 	return nil
 }
 
 func generateUser() tuser {
-	name := locate("TXTME_USER_NAME")
-	phone := locate("TXTME_USER_PHONE")
-	sid := locate("TXTME_USER_SID")
-	token := locate("TXTME_USER_TOKEN")
+	user, perr := user.Current()
+	check(perr)
+	configPath := fmt.Sprintf("%s/.txtme.toml", user.HomeDir)
 
-	generatedUser := tuser{
-		name:  name,
-		phone: phone,
-		sid:   sid,
-		token: token,
+	var configuredUser tuser
+	if _, err := toml.DecodeFile(configPath, &configuredUser); err != nil || configuredUser.Name == "" {
+		name := askfor("Name")
+		phoneTo := askfor("PhoneTo")
+		phoneFrom := askfor("PhoneFrom")
+		sid := askfor("Sid")
+		token := askfor("Token")
+
+		generatedUser := tuser{
+			Name:      name,
+			PhoneTo:   phoneTo,
+			PhoneFrom: phoneFrom,
+			Sid:       sid,
+			Token:     token,
+		}
+
+		save(generatedUser, configPath)
+		return generatedUser
 	}
-
-	return generatedUser
+	return configuredUser
 }
 
-func locate(item string) string {
+func askfor(item string) string {
 	result := os.Getenv(item)
 	if result == "" {
-		str := fmt.Sprintf("😮 Uh oh! I could not find your %s anywhere!", item)
-		fmt.Println(str)
 		prompt := promptui.Prompt{
-			Label: fmt.Sprintf("What is your %s? I will save it for future use!", item),
+			Label: fmt.Sprintf("Hey 👋! What is your %s? I will save it for future use!", strings.ToLower(item)),
 		}
 		response, err := prompt.Run()
-		if err != nil {
-			log.Fatal(err)
-		}
+		check(err)
 		result = response
 	}
+
 	return result
+}
+
+func save(user tuser, filePath string) {
+	fmt.Println(filePath)
+	f, _ := os.Create(filePath)
+	if err := toml.NewEncoder(f).Encode(user); err != nil {
+		log.Println(err)
+	}
+	err := f.Close()
+	check(err)
+}
+
+func check(e error) {
+	if e != nil {
+		log.Fatal(e)
+	}
 }
