@@ -42,7 +42,7 @@ func setup() {
 }
 
 func commands() {
-	app.Commands = []*cli.Command{}
+	app.Commands = []*cli.Command{} // future spot for commands
 }
 
 func send(c *cli.Context) error {
